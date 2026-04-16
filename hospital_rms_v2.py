@@ -1,12 +1,3 @@
-# =============================================================================
-# Intelligent Hospital Resource Management System
-# Algorithm: ACPL (Adaptive Consequence-Penalised Learning) v2
-#
-# Copyright (c) 2025 Shashank Dev. All rights reserved.
-# ACPL is an original algorithm developed by the author.
-# Unauthorised reproduction of the ACPL core is prohibited.
-# =============================================================================
-
 import csv
 import datetime
 import json
