@@ -743,8 +743,8 @@ class ExperimentConfig:
     log_level:         int   = logging.INFO
     experiment_id:     str   = field(default_factory=lambda: str(uuid.uuid4())[:8])
     output_dir:        str   = "hrms_runs"
-    fig_width:         float = 26.0
-    fig_height:        float = 14.0
+    fig_width:         float = 20.0
+    fig_height:        float = 11.0
     theme:             str   = "dark"
     batch_runs:        int   = 1
     ehr_loss_prob:     float = 0.04
@@ -977,7 +977,7 @@ class Resource:
         self.capacity = _RES_CAPACITY[rtype]
         self.used     = 0
         self.patient: Optional[Patient] = None
-        self.kills_total = 0
+        self.handled_total = 0
         self.overloads   = 0
         self._dwell_ticks      = 0
         self._last_patient_uid = -1
@@ -1158,28 +1158,39 @@ class MetricsStore:
 class WardLayout:
     GRID = 64
 
-    def __init__(self, rng: np.random.Generator):
-        G = self.GRID
-        grid = np.zeros((G, G), dtype=np.int32)
-        grid[2:30, 2:62] = 1
-        grid[2:18, 40:62] = 2
-        grid[34:62, 2:26] = 3
-        grid[34:62, 36:62] = 4
-        grid[34:62, 26:36] = 5
-        self.grid = grid
-        self._build_image()
-        self.heatmap = np.zeros((G, G), dtype=float)
+    # Zone definitions: (x0, y0, x1, y1) in grid coordinates
+    ZONES = [
+        (2, 2,  62, 30),   # zone 1 — GENERAL (bottom-left span)
+        (40, 2, 62, 18),   # zone 2 — ICU (top-right)
+        (2, 34, 26, 62),   # zone 3 — EMERGENCY (bottom-left)
+        (36, 34, 62, 62),  # zone 4 — SURGICAL (bottom-right)
+        (26, 34, 36, 62),  # zone 5 — MATERNITY (bottom-centre)
+    ]
+    # RGBA colours (r, g, b) for zones 1-5
+    ZONE_RGBA = [
+        (0.05, 0.20, 0.10, 0.75),   # GENERAL    — muted green
+        (0.20, 0.05, 0.05, 0.75),   # ICU        — muted red
+        (0.20, 0.10, 0.02, 0.75),   # EMERGENCY  — muted orange
+        (0.08, 0.08, 0.22, 0.75),   # SURGICAL   — muted blue
+        (0.15, 0.05, 0.20, 0.75),   # MATERNITY  — muted purple
+    ]
 
-    def _build_image(self):
-        G = self.GRID
-        zone_colors = np.array([
-            [0.05, 0.10, 0.15], [0.05, 0.20, 0.10], [0.20, 0.05, 0.05],
-            [0.20, 0.10, 0.02], [0.08, 0.08, 0.22], [0.15, 0.05, 0.20],
-        ], np.float32)
-        img = np.empty((G, G, 4), np.float32)
-        img[..., :3] = zone_colors[self.grid]
-        img[..., 3]  = 0.85
-        self.image = img
+    def __init__(self, rng: np.random.Generator):
+        self.heatmap = np.zeros((self.GRID, self.GRID), dtype=float)
+
+    def draw_zones(self, ax) -> None:
+        """Draw ward zones as Rectangle patches — no image resampling needed."""
+        import matplotlib.patches as mpatches
+        for (x0, y0, x1, y1), rgba in zip(self.ZONES, self.ZONE_RGBA):
+            rect = mpatches.FancyBboxPatch(
+                (x0, y0), x1 - x0, y1 - y0,
+                boxstyle="round,pad=0.5",
+                linewidth=0.8,
+                edgecolor=(0.3, 0.5, 0.6, 0.5),
+                facecolor=rgba,
+                zorder=0,
+            )
+            ax.add_patch(rect)
 
     def zone_at(self, pat: "Patient") -> int:
         return {PatientCategory.GENERAL:1, PatientCategory.ICU:2,
@@ -1440,8 +1451,13 @@ class Simulation:
 
         for pat in self.patients:
             if pat.active and pat.uid in self.filters:
-                self.filters[pat.uid].predict(self.cfg.dt)
-                self.filters[pat.uid].update(pat.acuity)
+                # EHR data-loss simulation: randomly drop sensor readings
+                if self.rng.get("ehr").random() >= self.cfg.ehr_loss_prob:
+                    self.filters[pat.uid].predict(self.cfg.dt)
+                    self.filters[pat.uid].update(pat.acuity)
+                else:
+                    # Predict-only step — no measurement update (data lost)
+                    self.filters[pat.uid].predict(self.cfg.dt)
 
         for res in self.resources:
             res.step(self.cfg.dt, enable_fatigue=self.cfg.enable_fatigue)
@@ -1504,7 +1520,7 @@ class Simulation:
                 self.discharges += 1
                 res = pat.assigned_resource
                 if res:
-                    res.kills_total += 1
+                    res.handled_total += 1
                     res.release(pat)
                 pat.active = False
                 self.filters.pop(pat.uid, None)
@@ -1625,7 +1641,8 @@ def run(cfg: ExperimentConfig):
     ax_ward.set_title("HOSPITAL WARD MAP  ·  LIVE PATIENT STATUS", fontsize=9, pad=4)
     ax_ward.set_xlim(0, G); ax_ward.set_ylim(0, G)
     ax_ward.set_aspect("equal"); ax_ward.axis("off")
-    ax_ward.imshow(sim.ward.image, origin="lower", extent=[0,G,0,G], aspect="auto", zorder=0)
+    # Use patches instead of imshow to avoid matplotlib image-resampling memory errors
+    sim.ward.draw_zones(ax_ward)
     for label, (cx, cy) in [("GENERAL WARD",(32,16)),("ICU",(51,10)),
                               ("A&E",(14,48)),("SURGICAL",(49,48)),("MATERNITY",(31,48))]:
         ax_ward.text(cx, cy, label, ha="center", va="center",
@@ -1633,8 +1650,10 @@ def run(cfg: ExperimentConfig):
     _pat_scatter  = ax_ward.scatter([], [], s=80, zorder=5, edgecolors="white", linewidths=0.5)
     _crit_scatter = ax_ward.scatter([], [], s=140, marker="*", zorder=6,
                                     c=PAL["red"], alpha=0.9)
+    # interpolation='nearest' avoids the float32 resampling buffer that caused _ArrayMemoryError
     _heatmap_img  = ax_ward.imshow(np.zeros((G, G)), origin="lower",
-                                   extent=[0,G,0,G], aspect="auto",
+                                   extent=[0,G,0,G],
+                                   interpolation='nearest',
                                    cmap="Reds", alpha=0.35, vmin=0, vmax=10, zorder=1)
 
     ax_log = fig.add_subplot(left_gs[1])
@@ -1887,6 +1906,7 @@ def _run_batch(cfg: ExperimentConfig) -> None:
                  bc_sim.discharges, bc_sim.mortalities,
                  bc_sim.sla.total_violations(), bc_sim.readmit_count)
         bc_sim.acpl.stop()
+        bc_sim.acpl._learn_thread.join(timeout=3.0)
 
     if not rows:
         return
@@ -1937,8 +1957,8 @@ Examples:
     parser.add_argument("--adm-period",        type=int,   default=90)
     parser.add_argument("--theme",             type=str,   default="dark",
                         choices=["dark","light"])
-    parser.add_argument("--width",             type=float, default=26.0)
-    parser.add_argument("--height",            type=float, default=14.0)
+    parser.add_argument("--width",             type=float, default=20.0)
+    parser.add_argument("--height",            type=float, default=11.0)
     parser.add_argument("--scenario",          type=str,   default="",
                         choices=["","surge","pandemic","routine","critical","nightshift"])
     parser.add_argument("--no-fatigue",        action="store_true")
@@ -2008,6 +2028,15 @@ Examples:
         return
 
     fig, ani, sim = run(cfg)
+
+    def _sigint_handler(sig, frame):
+        LOG.info("SIGINT received — terminating simulation.")
+        sim.acpl.stop()
+        if cfg.export_csv:
+            sim.metrics.export_csv(sim._csv_path)
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, _sigint_handler)
 
     try:
         plt.show()
