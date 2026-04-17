@@ -1158,56 +1158,137 @@ class MetricsStore:
 class WardLayout:
     GRID = 64
 
-    # Zone definitions: (x0, y0, x1, y1) in grid coordinates
-    ZONES = [
-        (2, 2,  62, 30),   # zone 1 — GENERAL (bottom-left span)
-        (40, 2, 62, 18),   # zone 2 — ICU (top-right)
-        (2, 34, 26, 62),   # zone 3 — EMERGENCY (bottom-left)
-        (36, 34, 62, 62),  # zone 4 — SURGICAL (bottom-right)
-        (26, 34, 36, 62),  # zone 5 — MATERNITY (bottom-centre)
-    ]
-    # RGBA colours (r, g, b) for zones 1-5
-    ZONE_RGBA = [
-        (0.05, 0.20, 0.10, 0.75),   # GENERAL    — muted green
-        (0.20, 0.05, 0.05, 0.75),   # ICU        — muted red
-        (0.20, 0.10, 0.02, 0.75),   # EMERGENCY  — muted orange
-        (0.08, 0.08, 0.22, 0.75),   # SURGICAL   — muted blue
-        (0.15, 0.05, 0.20, 0.75),   # MATERNITY  — muted purple
-    ]
+    # Non-overlapping zone boxes keyed by PatientCategory: (x0, y0, x1, y1)
+    #
+    #  Top row  (y 33–62): GENERAL WARD (wide left) | ICU (right)
+    #  Gap      (y 30–33): corridor / separator
+    #  Bot row  (y 2–30):  EMERGENCY | MATERNITY | SURGICAL
+    #
+    ZONES: Dict[int, Tuple[int,int,int,int]] = {
+        PatientCategory.GENERAL:   ( 2, 33, 40, 62),
+        PatientCategory.ICU:       (42, 33, 62, 62),
+        PatientCategory.EMERGENCY: ( 2,  2, 22, 30),
+        PatientCategory.MATERNITY: (24,  2, 43, 30),
+        PatientCategory.SURGICAL:  (45,  2, 62, 30),
+    }
+
+    # Zone face colour (RGBA) — subtle dark tint matching category hue
+    ZONE_FACE: Dict[int, tuple] = {
+        PatientCategory.GENERAL:   (0.03, 0.16, 0.26, 0.90),  # teal-blue
+        PatientCategory.ICU:       (0.26, 0.07, 0.05, 0.90),  # deep red
+        PatientCategory.EMERGENCY: (0.28, 0.10, 0.02, 0.90),  # burnt orange
+        PatientCategory.SURGICAL:  (0.10, 0.05, 0.26, 0.90),  # deep purple
+        PatientCategory.MATERNITY: (0.04, 0.22, 0.10, 0.90),  # forest green
+    }
+
+    # Zone border colour — matches _CAT_COLORS for visual consistency
+    ZONE_EDGE: Dict[int, str] = {
+        PatientCategory.GENERAL:   "#40d0ff",
+        PatientCategory.ICU:       "#ff8040",
+        PatientCategory.EMERGENCY: "#ff4040",
+        PatientCategory.SURGICAL:  "#a060ff",
+        PatientCategory.MATERNITY: "#00e5a0",
+    }
+
+    ZONE_LABELS: Dict[int, str] = {
+        PatientCategory.GENERAL:   "GENERAL WARD",
+        PatientCategory.ICU:       "ICU",
+        PatientCategory.EMERGENCY: "A&E / EMERGENCY",
+        PatientCategory.SURGICAL:  "SURGICAL",
+        PatientCategory.MATERNITY: "MATERNITY",
+    }
+
+    ZONE_BADGE: Dict[int, str] = {
+        PatientCategory.GENERAL:   "BED",
+        PatientCategory.ICU:       "ICU",
+        PatientCategory.EMERGENCY: "A&E",
+        PatientCategory.SURGICAL:  " OT",
+        PatientCategory.MATERNITY: "MAT",
+    }
 
     def __init__(self, rng: np.random.Generator):
         self.heatmap = np.zeros((self.GRID, self.GRID), dtype=float)
 
     def draw_zones(self, ax) -> None:
-        """Draw ward zones as Rectangle patches — no image resampling needed."""
+        """
+        Draw each ward zone as a styled FancyBboxPatch with a coloured
+        header bar.  No imshow / image resampling involved.
+        """
         import matplotlib.patches as mpatches
-        for (x0, y0, x1, y1), rgba in zip(self.ZONES, self.ZONE_RGBA):
-            rect = mpatches.FancyBboxPatch(
-                (x0, y0), x1 - x0, y1 - y0,
-                boxstyle="round,pad=0.5",
-                linewidth=0.8,
-                edgecolor=(0.3, 0.5, 0.6, 0.5),
-                facecolor=rgba,
-                zorder=0,
+        for cat, (x0, y0, x1, y1) in self.ZONES.items():
+            w, h = x1 - x0, y1 - y0
+            edge  = self.ZONE_EDGE[cat]
+            face  = self.ZONE_FACE[cat]
+
+            # Main zone body
+            body = mpatches.FancyBboxPatch(
+                (x0, y0), w, h,
+                boxstyle="round,pad=0.7",
+                linewidth=1.8, edgecolor=edge, facecolor=face,
+                zorder=0, alpha=0.95,
             )
-            ax.add_patch(rect)
+            ax.add_patch(body)
+
+            # Coloured header strip at the top of the zone
+            HDR = 4.8
+            hdr_face = (*face[:3], 0.55)
+            hdr = mpatches.FancyBboxPatch(
+                (x0 + 0.8, y1 - HDR), w - 1.6, HDR - 0.5,
+                boxstyle="round,pad=0.3",
+                linewidth=0, facecolor=hdr_face,
+                zorder=1,
+            )
+            ax.add_patch(hdr)
+
+            # Badge box (tiny pill on the left of the header)
+            badge_w = 5.2
+            badge = mpatches.FancyBboxPatch(
+                (x0 + 1.2, y1 - HDR + 0.6), badge_w, HDR - 1.8,
+                boxstyle="round,pad=0.2",
+                linewidth=0.8, edgecolor=edge,
+                facecolor=(*face[:3], 0.25),
+                zorder=2,
+            )
+            ax.add_patch(badge)
+            ax.text(x0 + 1.2 + badge_w / 2, y1 - HDR / 2,
+                    self.ZONE_BADGE[cat],
+                    ha="center", va="center",
+                    fontsize=4.8, fontweight="bold",
+                    color=edge, zorder=3)
+
+            # Zone name text
+            cx = (x0 + x1) / 2.0
+            ax.text(cx + 1.5, y1 - HDR / 2,
+                    self.ZONE_LABELS[cat],
+                    ha="center", va="center",
+                    fontsize=5.5, fontweight="bold",
+                    color=edge, zorder=3, alpha=0.97)
 
     def zone_at(self, pat: "Patient") -> int:
         return {PatientCategory.GENERAL:1, PatientCategory.ICU:2,
                 PatientCategory.EMERGENCY:3, PatientCategory.SURGICAL:4,
                 PatientCategory.MATERNITY:5}.get(pat.category, 0)
 
-    def patient_display_pos(self, pat: "Patient", idx: int) -> Tuple[float, float]:
-        G = self.GRID
-        zone_centres = {
-            PatientCategory.GENERAL:(32,16), PatientCategory.ICU:(51,10),
-            PatientCategory.EMERGENCY:(14,48), PatientCategory.SURGICAL:(49,48),
-            PatientCategory.MATERNITY:(31,48),
-        }
-        cx, cy = zone_centres.get(pat.category, (32, 32))
-        ox = (idx % 5) * 4 - 8
-        oy = (idx // 5) * 4 - 4
-        return float(np.clip(cx + ox, 2, G-2)), float(np.clip(cy + oy, 2, G-2))
+    def patient_display_pos(self, pat: "Patient", cat_idx: int) -> Tuple[float, float]:
+        """
+        Spread patients within their own zone using a grid layout.
+        cat_idx is the per-category sequential index (not global).
+        """
+        zone = self.ZONES.get(pat.category)
+        if zone is None:
+            return (32.0, 32.0)
+        x0, y0, x1, y1 = zone
+        # Inner area: leave margins + space for the zone header at top
+        ix0, ix1 = x0 + 2.5, x1 - 2.5
+        iy0, iy1 = y0 + 2.0, y1 - 5.8   # 5.8 = zone header height
+        step  = 4.2
+        cols  = max(1, int((ix1 - ix0) / step))
+        col   = cat_idx % cols
+        row   = cat_idx // cols
+        x     = ix0 + col * step + step * 0.35
+        y     = iy0 + row * step + step * 0.35
+        return (float(np.clip(x, ix0, ix1)),
+                float(np.clip(y, iy0, iy1)))
 
     def accumulate_heat(self, x, y, value=1.0):
         gx = int(np.clip(x, 0, self.GRID - 1))
@@ -1597,246 +1678,544 @@ class Simulation:
         return (time.perf_counter() - t0) * 1000
 
     def _patient_xy(self, pat: Patient) -> Tuple[float, float]:
-        idx = ([p.uid for p in self.patients].index(pat.uid)
-               if pat in self.patients else 0)
-        return self.ward.patient_display_pos(pat, idx % 25)
+        # Compute per-category index so the position sits inside the correct zone
+        cat_idx = sum(1 for p in self.patients
+                      if p.category == pat.category and p.uid < pat.uid)
+        return self.ward.patient_display_pos(pat, min(cat_idx, 24))
+
+
+def _hex_to_rgba(h: str, a: float = 0.12) -> tuple:
+    """Convert '#rrggbb' hex string to (r, g, b, a) float tuple."""
+    h = h.lstrip("#")
+    return tuple(int(h[i:i+2], 16) / 255.0 for i in (0, 2, 4)) + (a,)
 
 
 def run(cfg: ExperimentConfig):
+    import matplotlib.patches as mpatches
+    from collections import defaultdict as _dd
+
     Path(cfg.output_dir).mkdir(parents=True, exist_ok=True)
     sim = Simulation(cfg)
     G   = sim.ward.GRID
 
+    # ── rcParams ────────────────────────────────────────────────────────────────
     plt.rcParams.update({
-        "font.family":      "monospace",
-        "axes.facecolor":   PAL["panel"],
-        "figure.facecolor": PAL["bg"],
-        "text.color":       PAL["white"],
-        "axes.labelcolor":  PAL["dim"],
-        "xtick.color":      PAL["dim"],
-        "ytick.color":      PAL["dim"],
-        "axes.edgecolor":   PAL["border"],
-        "grid.color":       PAL["grid"],
-        "grid.linewidth":   0.4,
-        "axes.titlecolor":  PAL["green"],
-        "toolbar":          "None",
-        "figure.dpi":       80,
+        "font.family":       "monospace",
+        "axes.facecolor":    PAL["panel"],
+        "figure.facecolor":  PAL["bg"],
+        "text.color":        PAL["white"],
+        "axes.labelcolor":   PAL["dim"],
+        "xtick.color":       PAL["dim"],
+        "ytick.color":       PAL["dim"],
+        "axes.edgecolor":    PAL["border"],
+        "grid.color":        PAL["grid"],
+        "grid.linewidth":    0.4,
+        "axes.titlecolor":   PAL["green"],
+        "toolbar":           "None",
+        "figure.dpi":        90,
     })
 
     fig = plt.figure(figsize=(cfg.fig_width, cfg.fig_height))
     fig.patch.set_facecolor(PAL["bg"])
-    fig.suptitle("INTELLIGENT HOSPITAL RESOURCE MANAGEMENT SYSTEM  ·  ACPL v2",
-                 color=PAL["green"], fontsize=13, fontweight="bold", y=0.97)
 
-    outer  = gridspec.GridSpec(1, 3, figure=fig,
-                left=0.02, right=0.988, top=0.920, bottom=0.040,
-                wspace=0.30, width_ratios=[2.2, 1.05, 1.08])
-    left_gs = gridspec.GridSpecFromSubplotSpec(2, 1, subplot_spec=outer[0],
-                hspace=0.38, height_ratios=[2.8, 1.0])
-    mid_gs  = gridspec.GridSpecFromSubplotSpec(3, 1, subplot_spec=outer[1], hspace=0.68)
-    rgt_gs  = gridspec.GridSpecFromSubplotSpec(5, 1, subplot_spec=outer[2], hspace=0.70,
-                height_ratios=[0.82, 1.08, 0.88, 1.35, 1.20])
+    # ── Global header ───────────────────────────────────────────────────────────
+    fig.text(0.01, 0.976,
+             "INTELLIGENT HOSPITAL RESOURCE MANAGEMENT SYSTEM  ·  ACPL v2",
+             color=PAL["green"], fontsize=11, fontweight="bold", va="top")
+    sc_sub = f"Scenario: {cfg.scenario_label}  ·  " if cfg.scenario_label else ""
+    fig.text(0.01, 0.961,
+             f"{sc_sub}Adaptive Consequence-Penalised Learning "
+             f"·  seed={cfg.seed}  frames={cfg.max_frames}",
+             color=PAL["dim"], fontsize=6.5, va="top")
+    _hdr_txt = fig.text(0.76, 0.970, "", ha="left", va="center",
+                        fontsize=7.5, color=PAL["cyan"], fontweight="bold")
 
+    # ── 3-column outer grid ──────────────────────────────────────────────────────
+    # col 0 (wide)  : ward map + event log
+    # col 1 (medium): KPI strip + 4 trend charts
+    # col 2 (medium): resource bars + acuity histogram + ACPL panel
+    outer = gridspec.GridSpec(
+        1, 3, figure=fig,
+        left=0.01, right=0.99, top=0.945, bottom=0.025,
+        wspace=0.24, width_ratios=[2.55, 1.10, 1.00],
+    )
+    left_gs = gridspec.GridSpecFromSubplotSpec(
+        2, 1, subplot_spec=outer[0], hspace=0.10,
+        height_ratios=[3.9, 1.0],
+    )
+    mid_gs = gridspec.GridSpecFromSubplotSpec(
+        5, 1, subplot_spec=outer[1], hspace=0.72,
+        height_ratios=[0.60, 1.0, 1.0, 1.0, 1.0],
+    )
+    rgt_gs = gridspec.GridSpecFromSubplotSpec(
+        3, 1, subplot_spec=outer[2], hspace=0.62,
+        height_ratios=[1.55, 0.80, 1.10],
+    )
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # WARD MAP
+    # ═══════════════════════════════════════════════════════════════════════════
     ax_ward = fig.add_subplot(left_gs[0])
-    ax_ward.set_title("HOSPITAL WARD MAP  ·  LIVE PATIENT STATUS", fontsize=9, pad=4)
     ax_ward.set_xlim(0, G); ax_ward.set_ylim(0, G)
-    ax_ward.set_aspect("equal"); ax_ward.axis("off")
-    # Use patches instead of imshow to avoid matplotlib image-resampling memory errors
+    ax_ward.set_aspect("equal")
+    ax_ward.axis("off")
+    ax_ward.set_title("HOSPITAL WARD MAP  ·  LIVE PATIENT STATUS",
+                      fontsize=9, pad=5, color=PAL["green"])
+
+    # Zone backgrounds (static vector patches — no image resampling)
     sim.ward.draw_zones(ax_ward)
-    for label, (cx, cy) in [("GENERAL WARD",(32,16)),("ICU",(51,10)),
-                              ("A&E",(14,48)),("SURGICAL",(49,48)),("MATERNITY",(31,48))]:
-        ax_ward.text(cx, cy, label, ha="center", va="center",
-                     color=PAL["dim"], fontsize=6, alpha=0.7)
-    _pat_scatter  = ax_ward.scatter([], [], s=80, zorder=5, edgecolors="white", linewidths=0.5)
-    _crit_scatter = ax_ward.scatter([], [], s=140, marker="*", zorder=6,
-                                    c=PAL["red"], alpha=0.9)
-    # interpolation='nearest' avoids the float32 resampling buffer that caused _ArrayMemoryError
-    _heatmap_img  = ax_ward.imshow(np.zeros((G, G)), origin="lower",
-                                   extent=[0,G,0,G],
-                                   interpolation='nearest',
-                                   cmap="Reds", alpha=0.35, vmin=0, vmax=10, zorder=1)
 
-    ax_log = fig.add_subplot(left_gs[1])
-    ax_log.set_title("EVENT LOG", fontsize=8, pad=2)
-    ax_log.axis("off")
-    _log_texts = [ax_log.text(0.01, 1.0 - i*0.115, "",
-                               transform=ax_log.transAxes, fontsize=6.5,
-                               va="top", color=PAL["dim"]) for i in range(9)]
+    # Corridor separator
+    ax_ward.plot([2, 62], [31.5, 31.5],
+                 color=PAL["border"], lw=1.0, alpha=0.55, zorder=1,
+                 ls="--")
+    ax_ward.text(32, 31.5, "CORRIDOR",
+                 ha="center", va="center", fontsize=4.5,
+                 color=PAL["dim"], alpha=0.6, zorder=2,
+                 bbox=dict(fc=PAL["bg"], ec="none", pad=1.0))
 
-    ax_occ = fig.add_subplot(mid_gs[0])
-    ax_occ.set_title("BED OCCUPANCY %", fontsize=8)
-    ax_occ.set_ylim(0, 105); ax_occ.set_xlim(0, 500)
-    ax_occ.axhline(80, color=PAL["yellow"], lw=0.7, alpha=0.6, ls="--")
-    ax_occ.axhline(95, color=PAL["red"],    lw=0.7, alpha=0.6, ls="--")
-    _occ_line, = ax_occ.plot([], [], color=PAL["cyan"], lw=1.2)
+    # Heatmap overlay (pcolormesh — bypasses all imshow memory pipelines)
+    _hm_X, _hm_Y = np.meshgrid(np.arange(G + 1), np.arange(G + 1))
+    _heatmap_mesh = ax_ward.pcolormesh(
+        _hm_X, _hm_Y, np.zeros((G, G)),
+        cmap="Reds", alpha=0.28, vmin=0, vmax=10, zorder=2, shading="flat",
+    )
 
-    ax_dr = fig.add_subplot(mid_gs[1])
-    ax_dr.set_title("DISCHARGE RATE %", fontsize=8)
-    ax_dr.set_ylim(0, 105); ax_dr.set_xlim(0, 500)
-    _dr_line, = ax_dr.plot([], [], color=PAL["green"], lw=1.2)
+    # Per-zone dynamic patient-count labels (bottom of each zone box)
+    _zone_count_texts: Dict[int, object] = {}
+    for cat in PatientCategory:
+        x0, y0, x1, y1 = sim.ward.ZONES[cat]
+        cx = (x0 + x1) / 2.0
+        _zone_count_texts[cat] = ax_ward.text(
+            cx, y0 + 1.4, "0 pts",
+            ha="center", va="bottom", fontsize=5.0,
+            color=WardLayout.ZONE_EDGE[cat], zorder=5, alpha=0.85,
+        )
 
-    ax_pt = fig.add_subplot(mid_gs[2])
-    ax_pt.set_title("ACTIVE PATIENTS", fontsize=8)
-    ax_pt.set_ylim(0, cfg.max_patients + 2); ax_pt.set_xlim(0, 500)
-    _pt_line, = ax_pt.plot([], [], color=PAL["yellow"], lw=1.2)
+    # Patient scatter — colour = category, size = acuity (30–210)
+    _pat_scatter = ax_ward.scatter(
+        [], [], s=[], zorder=6,
+        edgecolors="white", linewidths=0.5, alpha=0.92,
+    )
+    # Critical-ring overlay (hollow, red, large)
+    _crit_ring = ax_ward.scatter(
+        [], [], s=[], zorder=5,
+        facecolors="none", edgecolors=PAL["red"], linewidths=2.2, alpha=0.85,
+    )
+    # Critical star (filled)
+    _crit_star = ax_ward.scatter(
+        [], [], s=[], marker="*", zorder=7,
+        c=PAL["red"], alpha=0.95,
+    )
 
-    ax_kpi = fig.add_subplot(rgt_gs[0])
-    ax_kpi.axis("off")
-    kpi_defs = [
-        ("DISCHARGES", "0",   PAL["green"]),
-        ("MORTALITIES","0",   PAL["red"]),
-        ("DISCHARGE %","—",   PAL["cyan"]),
-        ("SLA BREACH%","—%",  PAL["orange"]),
-        ("READMITS",   "0",   PAL["purple"]),
+    # ── Embedded legend (corridor strip) ────────────────────────────────────
+    legend_y   = 30.9
+    cat_legend = [
+        (PatientCategory.EMERGENCY, "Emergency"),
+        (PatientCategory.ICU,       "ICU"),
+        (PatientCategory.GENERAL,   "General"),
+        (PatientCategory.SURGICAL,  "Surgical"),
+        (PatientCategory.MATERNITY, "Maternity"),
     ]
-    _kpi_labels = {}
-    for idx_k, (kname, kval, kcol) in enumerate(kpi_defs):
-        ax_kpi.text(0.02, 1.0 - idx_k*0.20, kname, transform=ax_kpi.transAxes,
-                    fontsize=5.5, color=PAL["dim"])
-        _kpi_labels[kname] = ax_kpi.text(0.55, 1.0 - idx_k*0.20, kval,
-                                          transform=ax_kpi.transAxes,
-                                          fontsize=7.5, color=kcol, fontweight="bold")
+    for li, (cat, label) in enumerate(cat_legend):
+        col = _CAT_COLORS[cat]
+        lx  = 2.5 + li * 12.0
+        dot_patch = mpatches.Circle((lx + 0.8, legend_y + 0.35), 0.7,
+                                     facecolor=col, edgecolor="white",
+                                     linewidth=0.4, zorder=6)
+        ax_ward.add_patch(dot_patch)
+        ax_ward.text(lx + 2.2, legend_y + 0.35, label,
+                     fontsize=4.5, color=col, va="center", zorder=6)
 
-    ax_util = fig.add_subplot(rgt_gs[1])
-    ax_util.set_title("RESOURCE UTIL. + FATIGUE", fontsize=8)
-    ax_util.set_xlim(0, 1); ax_util.set_ylim(-0.5, len(sim.resources)-0.5)
+    ax_ward.text(0.5, 30.0,
+                 "dot size = acuity severity   "
+                 "red ring = critical   "
+                 "★ = imminent risk   "
+                 "heat = past mortality",
+                 fontsize=4.2, color=PAL["dim"], va="top", zorder=6, alpha=0.75)
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # EVENT LOG
+    # ═══════════════════════════════════════════════════════════════════════════
+    ax_log = fig.add_subplot(left_gs[1])
+    ax_log.set_facecolor(PAL["panel"])
+    ax_log.axis("off")
+    ax_log.set_title("LIVE EVENT LOG", fontsize=7.5, pad=2, color=PAL["cyan"])
+    for spine in ax_log.spines.values():
+        spine.set_visible(True)
+        spine.set_color(PAL["border"])
+        spine.set_linewidth(0.7)
+
+    ax_log.text(0.005, 0.97,
+                " TYPE    TIME    EVENT DESCRIPTION",
+                transform=ax_log.transAxes, fontsize=4.8,
+                color=PAL["dim"], va="top", style="italic")
+
+    _log_texts = [
+        ax_log.text(0.005, 0.87 - i * 0.145, "",
+                    transform=ax_log.transAxes, fontsize=5.8,
+                    va="top", color=PAL["dim"], family="monospace")
+        for i in range(6)
+    ]
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # KPI CARDS  (top of middle column)
+    # ═══════════════════════════════════════════════════════════════════════════
+    ax_kpi = fig.add_subplot(mid_gs[0])
+    ax_kpi.axis("off")
+    ax_kpi.set_xlim(0, 5); ax_kpi.set_ylim(0, 1)
+
+    kpi_defs = [
+        ("DISCHARGED",  "0",  PAL["green"]),
+        ("MORTALITIES", "0",  PAL["red"]),
+        ("DISCHARGE %", "—",  PAL["cyan"]),
+        ("SLA BREACH",  "—",  PAL["orange"]),
+        ("READMITS",    "0",  PAL["purple"]),
+    ]
+    _kpi_val: Dict[str, object] = {}
+
+    for ki, (kname, kval, kcol) in enumerate(kpi_defs):
+        kx = ki * 1.0 + 0.03
+        # Card background
+        card = mpatches.FancyBboxPatch(
+            (kx, 0.06), 0.90, 0.86,
+            boxstyle="round,pad=0.02",
+            linewidth=1.2, edgecolor=kcol,
+            facecolor=_hex_to_rgba(kcol, 0.11),
+            zorder=0,
+        )
+        ax_kpi.add_patch(card)
+        ax_kpi.text(kx + 0.45, 0.73, kname, ha="center", va="center",
+                    fontsize=4.5, color=PAL["dim"], zorder=1)
+        _kpi_val[kname] = ax_kpi.text(
+            kx + 0.45, 0.33, kval, ha="center", va="center",
+            fontsize=9.5, color=kcol, fontweight="bold", zorder=1,
+        )
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # TREND CHARTS  (middle column, rows 1-4)
+    # ═══════════════════════════════════════════════════════════════════════════
+    def _make_chart(gs_idx, title, ylim, ref_lines=None):
+        """Helper: styled time-series axis."""
+        ax = fig.add_subplot(mid_gs[gs_idx])
+        ax.set_title(title, fontsize=7.0, pad=2)
+        ax.set_ylim(*ylim); ax.set_xlim(0, 500)
+        ax.tick_params(axis="both", labelsize=4.8, length=2, pad=1)
+        ax.grid(True, alpha=0.28, lw=0.4)
+        if ref_lines:
+            for yv, col, lbl in ref_lines:
+                ax.axhline(yv, color=col, lw=0.7, alpha=0.55, ls="--")
+                ax.text(0.98, yv + 0.5, lbl, ha="right", fontsize=4.2,
+                        color=col, alpha=0.75, va="bottom",
+                        transform=ax.get_yaxis_transform())
+        return ax
+
+    # Chart 1 — Occupancy
+    ax_occ = _make_chart(1, "BED OCCUPANCY  %", (0, 108),
+                         [(80, PAL["yellow"], "WARN 80%"),
+                          (95, PAL["red"],    "CRIT 95%")])
+    ax_occ.axhspan(80, 95,  color=PAL["yellow"], alpha=0.05, zorder=0)
+    ax_occ.axhspan(95, 108, color=PAL["red"],    alpha=0.07, zorder=0)
+    _occ_line, = ax_occ.plot([], [], color=PAL["cyan"],   lw=1.4, zorder=3)
+    _occ_dot,  = ax_occ.plot([], [], "o", color=PAL["cyan"],  ms=3.8, zorder=5)
+
+    # Chart 2 — Discharge rate
+    ax_dr = _make_chart(2, "DISCHARGE RATE  %", (0, 105),
+                        [(90, PAL["green"], "TARGET 90%")])
+    ax_dr.axhspan(90, 105, color=PAL["green"], alpha=0.06, zorder=0)
+    _dr_line, = ax_dr.plot([], [], color=PAL["green"],  lw=1.4, zorder=3)
+    _dr_dot,  = ax_dr.plot([], [], "o", color=PAL["green"],  ms=3.8, zorder=5)
+
+    # Chart 3 — SLA breach rate
+    ax_sla = _make_chart(3, "SLA BREACH RATE  %", (0, 30),
+                         [(5,  PAL["yellow"], "WARN 5%"),
+                          (15, PAL["red"],    "CRIT 15%")])
+    ax_sla.axhspan(5,  15, color=PAL["yellow"], alpha=0.05, zorder=0)
+    ax_sla.axhspan(15, 30, color=PAL["red"],    alpha=0.07, zorder=0)
+    _sla_line, = ax_sla.plot([], [], color=PAL["orange"], lw=1.4, zorder=3)
+    _sla_dot,  = ax_sla.plot([], [], "o", color=PAL["orange"], ms=3.8, zorder=5)
+
+    # Chart 4 — Active patient count
+    ax_pt = _make_chart(4, "ACTIVE PATIENTS", (0, cfg.max_patients + 3),
+                        [(int(cfg.max_patients * 0.85),
+                          PAL["yellow"], "85% cap")])
+    _pt_line, = ax_pt.plot([], [], color=PAL["yellow"], lw=1.4, zorder=3)
+    _pt_dot,  = ax_pt.plot([], [], "o", color=PAL["yellow"], ms=3.8, zorder=5)
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # RESOURCE UTILISATION  (right column, top)
+    # ═══════════════════════════════════════════════════════════════════════════
+    ax_util = fig.add_subplot(rgt_gs[0])
+    ax_util.set_title("RESOURCE UTIL. + FATIGUE", fontsize=7.5, pad=3)
+    n_res = len(sim.resources)
+    ax_util.set_xlim(0, 1.08)
+    ax_util.set_ylim(-0.5, n_res - 0.5)
     ax_util.set_facecolor(PAL["panel"])
-    _util_bars = ax_util.barh(range(len(sim.resources)), [0.0]*len(sim.resources),
-                               color=PAL["cyan"], alpha=0.7, height=0.6)
-    _fat_bars  = ax_util.barh(range(len(sim.resources)), [0.0]*len(sim.resources),
-                               color=PAL["orange"], alpha=0.35, height=0.3, left=0)
+    ax_util.tick_params(axis="y", labelsize=4.6, length=0, pad=2)
+    ax_util.tick_params(axis="x", labelsize=4.6, length=2)
+    ax_util.set_xlabel("Utilisation / Fatigue  (0 → 1)", fontsize=5.0, labelpad=1)
+    ax_util.grid(True, axis="x", alpha=0.28, lw=0.4)
+    ax_util.axvline(0.70, color=PAL["yellow"], lw=0.6, ls="--", alpha=0.50)
+    ax_util.axvline(0.90, color=PAL["red"],    lw=0.6, ls="--", alpha=0.50)
 
-    ax_sla = fig.add_subplot(rgt_gs[2])
-    ax_sla.set_title("SLA BREACH RATE %", fontsize=8)
-    ax_sla.set_ylim(0, 30); ax_sla.set_xlim(0, 500)
-    ax_sla.axhline(5, color=PAL["yellow"], lw=0.7, alpha=0.6, ls="--")
-    ax_sla.axhline(15, color=PAL["red"], lw=0.7, alpha=0.6, ls="--")
-    _sla_line, = ax_sla.plot([], [], color=PAL["orange"], lw=1.2)
-    ax_sla.set_facecolor(PAL["panel"])
+    # Resource name labels on y-axis
+    ax_util.set_yticks(range(n_res))
+    ax_util.set_yticklabels([r.name_str() for r in sim.resources], fontsize=4.4)
 
-    ax_acpl = fig.add_subplot(rgt_gs[3])
-    ax_acpl.axis("off")
-    ax_acpl.set_title("ACPL v2 DIAGNOSTICS", fontsize=8)
-    _acpl_texts = [ax_acpl.text(0.02, 1.0 - i*0.15, "",
-                                 transform=ax_acpl.transAxes,
-                                 fontsize=6.0, color=PAL["purple"]) for i in range(6)]
+    _util_bars = ax_util.barh(range(n_res), [0.0] * n_res,
+                               color=PAL["cyan"], alpha=0.78, height=0.50, zorder=2)
+    _fat_bars  = ax_util.barh(range(n_res), [0.0] * n_res,
+                               color=PAL["orange"], alpha=0.42, height=0.26,
+                               left=0, zorder=3)
+    # Inline legend
+    ax_util.text(0.01, -0.06, "■ util",    fontsize=4.5, color=PAL["cyan"],
+                 transform=ax_util.transAxes)
+    ax_util.text(0.22, -0.06, "■ fatigue", fontsize=4.5, color=PAL["orange"],
+                 transform=ax_util.transAxes)
 
-    ax_acu = fig.add_subplot(rgt_gs[4])
-    ax_acu.set_title("PATIENT ACUITY DIST.", fontsize=8)
+    # ═══════════════════════════════════════════════════════════════════════════
+    # ACUITY DISTRIBUTION  (right column, middle)
+    # ═══════════════════════════════════════════════════════════════════════════
+    ax_acu = fig.add_subplot(rgt_gs[1])
+    ax_acu.set_title("ACUITY DISTRIBUTION (active)", fontsize=7.5, pad=2)
     ax_acu.set_xlim(0, 1); ax_acu.set_ylim(0, 8)
     ax_acu.set_facecolor(PAL["panel"])
-    _acu_bars = ax_acu.bar(np.linspace(0.05, 0.95, 10), [0]*10,
-                            width=0.09, color=PAL["yellow"], alpha=0.7)
+    ax_acu.set_xlabel("Score  (0 = stable  →  1 = critical)", fontsize=4.8, labelpad=1)
+    ax_acu.tick_params(labelsize=4.8)
+    ax_acu.grid(True, axis="y", alpha=0.28, lw=0.4)
 
-    _title_txt = fig.text(0.50, 0.958, "", ha="center", va="center",
-                          fontsize=9.5, color=PAL["cyan"], fontweight="bold")
+    # Severity bands
+    ax_acu.axvspan(0.00, 0.45, color=PAL["green"],  alpha=0.07, zorder=0)
+    ax_acu.axvspan(0.45, 0.65, color=PAL["yellow"], alpha=0.07, zorder=0)
+    ax_acu.axvspan(0.65, 0.85, color=PAL["orange"], alpha=0.07, zorder=0)
+    ax_acu.axvspan(0.85, 1.00, color=PAL["red"],    alpha=0.10, zorder=0)
+    for lbl, xp, col in [("STABLE", 0.22, PAL["green"]), ("MOD", 0.55, PAL["yellow"]),
+                          ("HIGH", 0.75, PAL["orange"]), ("CRIT", 0.92, PAL["red"])]:
+        ax_acu.text(xp, 7.6, lbl, ha="center", va="top",
+                    fontsize=3.8, color=col, alpha=0.75)
 
+    _acu_bar_cols = []
+    bin_ctrs = np.linspace(0.05, 0.95, 10)
+    for bc in bin_ctrs:
+        if   bc < 0.45: _acu_bar_cols.append(PAL["green"])
+        elif bc < 0.65: _acu_bar_cols.append(PAL["yellow"])
+        elif bc < 0.85: _acu_bar_cols.append(PAL["orange"])
+        else:           _acu_bar_cols.append(PAL["red"])
+    _acu_bars = ax_acu.bar(bin_ctrs, [0] * 10, width=0.082,
+                            color=_acu_bar_cols, alpha=0.78, zorder=2)
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # ACPL AI DIAGNOSTICS  (right column, bottom)
+    # ═══════════════════════════════════════════════════════════════════════════
+    ax_acpl = fig.add_subplot(rgt_gs[2])
+    ax_acpl.set_title("ACPL v2  ·  AI LEARNING ENGINE",
+                      fontsize=7.5, pad=3, color=PAL["purple"])
+    ax_acpl.axis("off")
+    ax_acpl.set_facecolor(PAL["panel"])
+    for spine in ax_acpl.spines.values():
+        spine.set_visible(True)
+        spine.set_color(PAL["purple"])
+        spine.set_linewidth(0.8)
+
+    # Brief explanation banner
+    ax_acpl.text(0.50, 0.97,
+                 "Learns to avoid bad outcomes by penalising\n"
+                 "decisions that lead to SLA breaches or mortality",
+                 transform=ax_acpl.transAxes, ha="center", va="top",
+                 fontsize=4.4, color=PAL["dim"], style="italic",
+                 wrap=True)
+
+    acpl_row_meta = [
+        # (label,            tooltip / explanation,               colour)
+        ("Updates",    "# of neural-net weight updates",          PAL["purple"]),
+        ("Buf size",   "Experience replay buffer (max 8 000)",     PAL["dim"]),
+        ("Policy loss","Q-net TD-error loss  (↓ = learning well)", PAL["cyan"]),
+        ("Mean λ",     "Penalty multiplier  (↑ = more cautious)",  PAL["orange"]),
+        ("Mean C",     "Predicted risk / consequence score",       PAL["red"]),
+        ("Staff fatigue", "Avg fatigue across all staff teams",    PAL["yellow"]),
+    ]
+    _acpl_val_texts = []
+    row_ys = [0.76, 0.63, 0.50, 0.37, 0.24, 0.11]
+    for i, (lbl, tip, col) in enumerate(acpl_row_meta):
+        ry = row_ys[i]
+        ax_acpl.text(0.02, ry, lbl, transform=ax_acpl.transAxes,
+                     fontsize=5.2, color=PAL["dim"], va="center")
+        ax_acpl.text(0.02, ry - 0.06, tip, transform=ax_acpl.transAxes,
+                     fontsize=3.8, color=PAL["border"], va="center", style="italic")
+        vt = ax_acpl.text(0.72, ry, "—", transform=ax_acpl.transAxes,
+                          fontsize=6.8, color=col, va="center",
+                          fontweight="bold", ha="left")
+        _acpl_val_texts.append(vt)
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # _update  — called every animation frame
+    # ═══════════════════════════════════════════════════════════════════════════
     def _update(frame):
-        tick_ms = sim.tick()
+        sim.tick()
 
         active_pats = [p for p in sim.patients if p.active]
-        positions, colors, crit_pos = [], [], []
-        for idx_p, pat in enumerate(active_pats):
-            x, y = sim.ward.patient_display_pos(pat, idx_p)
+
+        # ── Ward map ──────────────────────────────────────────────────────────
+        cat_cnt   = _dd(int)
+        positions, colours, sizes = [], [], []
+        ring_pos, ring_sz  = [], []
+        star_pos, star_sz  = [], []
+
+        for pat in active_pats:
+            cidx = cat_cnt[pat.category]
+            cat_cnt[pat.category] += 1
+            x, y = sim.ward.patient_display_pos(pat, cidx)
             positions.append((x, y))
-            colors.append(_CAT_COLORS[pat.category])
+            colours.append(_CAT_COLORS[pat.category])
+            dot_sz = 28 + pat.acuity * 190      # 28 (stable) → 218 (critical)
+            sizes.append(dot_sz)
             if pat.acuity >= CRITICAL_ACUITY:
-                crit_pos.append((x, y))
+                ring_pos.append((x, y)); ring_sz.append(dot_sz * 3.8)
+                star_pos.append((x, y)); star_sz.append(dot_sz * 1.6)
+
         if positions:
             xs, ys = zip(*positions)
             _pat_scatter.set_offsets(np.column_stack([xs, ys]))
-            _pat_scatter.set_color(colors)
+            _pat_scatter.set_color(colours)
+            _pat_scatter.set_sizes(sizes)
         else:
             _pat_scatter.set_offsets(np.empty((0, 2)))
-        if crit_pos:
-            cxs, cys = zip(*crit_pos)
-            _crit_scatter.set_offsets(np.column_stack([cxs, cys]))
-        else:
-            _crit_scatter.set_offsets(np.empty((0, 2)))
+            _pat_scatter.set_sizes([])
 
+        if ring_pos:
+            rxs, rys = zip(*ring_pos)
+            _crit_ring.set_offsets(np.column_stack([rxs, rys]))
+            _crit_ring.set_sizes(ring_sz)
+        else:
+            _crit_ring.set_offsets(np.empty((0, 2))); _crit_ring.set_sizes([])
+
+        if star_pos:
+            sxs, sys_ = zip(*star_pos)
+            _crit_star.set_offsets(np.column_stack([sxs, sys_]))
+            _crit_star.set_sizes(star_sz)
+        else:
+            _crit_star.set_offsets(np.empty((0, 2))); _crit_star.set_sizes([])
+
+        # Zone patient-count labels
+        for cat, txt in _zone_count_texts.items():
+            n = sum(1 for p in active_pats if p.category == cat)
+            txt.set_text(f"{n} pt{'s' if n != 1 else ''}")
+
+        # Heatmap (pcolormesh flat array)
         hm = sim.ward.heatmap.copy()
         if hm.max() > 0:
-            hm = hm / max(hm.max(), 1.0) * 10
-        _heatmap_img.set_data(hm)
+            hm = hm / hm.max() * 10
+        _heatmap_mesh.set_array(hm.ravel())
 
+        # ── Event log ─────────────────────────────────────────────────────────
+        _EVT_ICONS = {
+            "MORTAL":     "💀",
+            "SLA BREACH": "⚠",
+            "READMIT":    "↩",
+            "SURGE":      "📈",
+            "WAVE":       "🌊",
+            "CAPACITY":   "🔴",
+        }
         evts = list(sim.events)
         for i, txt_obj in enumerate(_log_texts):
             if i < len(evts):
                 e = evts[i]
-                col = (PAL["red"]    if "MORTAL" in e or "SLA BREACH" in e else
-                       PAL["orange"] if "READMIT" in e or "SURGE" in e     else
-                       PAL["green"]  if "WAVE" in e                         else PAL["dim"])
-                txt_obj.set_text(e[:62]); txt_obj.set_color(col)
+                col = (PAL["red"]    if "MORTAL"   in e or "SLA BREACH" in e else
+                       PAL["orange"] if "READMIT"  in e or "SURGE"      in e else
+                       PAL["green"]  if "WAVE"     in e                       else
+                       PAL["yellow"] if "CAPACITY" in e                       else
+                       PAL["dim"])
+                icon = next((v for k, v in _EVT_ICONS.items() if k in e), "·")
+                txt_obj.set_text(f"{icon} {e[:65]}")
+                txt_obj.set_color(col)
             else:
                 txt_obj.set_text("")
 
-        def _upd_line(line, data, ax):
-            if data:
-                line.set_data(range(len(data)), list(data))
-                ax.set_xlim(0, max(500, len(data)))
+        # ── Trend charts ──────────────────────────────────────────────────────
+        def _upd(line, dot, data, ax):
+            if not data:
+                return
+            d = list(data)
+            x = list(range(len(d)))
+            line.set_data(x, d)
+            dot.set_data([x[-1]], [d[-1]])
+            ax.set_xlim(0, max(500, len(d) + 10))
 
-        _upd_line(_occ_line, sim.occupancy_hist,      ax_occ)
-        _upd_line(_dr_line,  sim.discharge_rate_hist, ax_dr)
-        _upd_line(_pt_line,  sim.patient_count_hist,  ax_pt)
+        _upd(_occ_line, _occ_dot, sim.occupancy_hist,      ax_occ)
+        _upd(_dr_line,  _dr_dot,  sim.discharge_rate_hist, ax_dr)
+        _upd(_pt_line,  _pt_dot,  sim.patient_count_hist,  ax_pt)
 
         sla_data = list(sim.sla_violation_hist)
         if sla_data:
             _sla_line.set_data(range(len(sla_data)), sla_data)
-            ax_sla.set_xlim(0, max(500, len(sla_data)))
-            ax_sla.set_ylim(0, max(5, max(sla_data) * 1.2))
+            _sla_dot.set_data([len(sla_data) - 1], [sla_data[-1]])
+            ax_sla.set_xlim(0, max(500, len(sla_data) + 10))
+            ax_sla.set_ylim(0, max(6, max(sla_data) * 1.25))
 
+        # ── KPI cards ─────────────────────────────────────────────────────────
         total   = sim.discharges + sim.mortalities
         dr_pct  = sim.discharges / total * 100 if total else 0.0
-        occ_now = list(sim.occupancy_hist)[-1] if sim.occupancy_hist else 0.0
-        sla_pct = list(sim.sla_violation_hist)[-1] if sim.sla_violation_hist else 0.0
-        _kpi_labels["DISCHARGES"].set_text(str(sim.discharges))
-        _kpi_labels["MORTALITIES"].set_text(str(sim.mortalities))
-        _kpi_labels["DISCHARGE %"].set_text(f"{dr_pct:.1f}%")
-        _kpi_labels["SLA BREACH%"].set_text(f"{sla_pct:.1f}%")
-        _kpi_labels["SLA BREACH%"].set_color(
-            PAL["red"] if sla_pct > 15 else PAL["yellow"] if sla_pct > 5 else PAL["green"])
-        _kpi_labels["READMITS"].set_text(str(sim.readmit_count))
+        occ_now = list(sim.occupancy_hist)[-1]      if sim.occupancy_hist      else 0.0
+        sla_now = list(sim.sla_violation_hist)[-1]  if sim.sla_violation_hist  else 0.0
 
+        _kpi_val["DISCHARGED"].set_text(str(sim.discharges))
+        _kpi_val["MORTALITIES"].set_text(str(sim.mortalities))
+        _kpi_val["DISCHARGE %"].set_text(f"{dr_pct:.1f}%")
+        _kpi_val["SLA BREACH"].set_text(f"{sla_now:.1f}%")
+        _kpi_val["SLA BREACH"].set_color(
+            PAL["red"] if sla_now > 15 else PAL["yellow"] if sla_now > 5 else PAL["green"])
+        _kpi_val["READMITS"].set_text(str(sim.readmit_count))
+
+        # ── Resource bars ─────────────────────────────────────────────────────
         for bar_u, bar_f, res in zip(_util_bars, _fat_bars, sim.resources):
             util = res.used / max(1, res.capacity)
             bar_u.set_width(util)
-            bar_u.set_color(PAL["red"] if util > 0.9 else
-                            PAL["yellow"] if util > 0.7 else PAL["cyan"])
+            bar_u.set_color(
+                PAL["red"]    if util > 0.90 else
+                PAL["yellow"] if util > 0.70 else
+                PAL["green"]  if util > 0.0  else PAL["dim"]
+            )
             bar_f.set_width(res.fatigue)
 
-        ad = sim.acpl.diagnostics()
-        fat_data = list(sim.fatigue_hist)
-        avg_fat  = fat_data[-1] if fat_data else 0.0
-        acpl_lines = [
-            f"Updates  : {ad['acpl_updates']}",
-            f"Buf size : {ad['acpl_buf_size']}",
-            f"P-loss   : {ad['acpl_p_loss']:.4f}",
-            f"Mean λ   : {ad['acpl_mean_lam']:.3f}",
-            f"Mean C   : {ad['acpl_mean_C']:.3f}",
-            f"StfFatigue: {avg_fat:.1f}%",
-        ]
-        for txt_obj, line in zip(_acpl_texts, acpl_lines):
-            txt_obj.set_text(line)
-
+        # ── Acuity histogram ──────────────────────────────────────────────────
         acuities = [p.acuity for p in sim.patients if p.active]
         if acuities:
             counts, _ = np.histogram(acuities, bins=10, range=(0, 1))
             for bar_obj, cnt in zip(_acu_bars, counts):
                 bar_obj.set_height(cnt)
-            ax_acu.set_ylim(0, max(2, max(counts) + 1))
+            ax_acu.set_ylim(0, max(3, max(counts) + 1))
 
-        forecast_str = sim.forecaster.forecast_str()
-        _title_txt.set_text(
-            f"TICK {sim.step_n:5d}  |  T={sim.t:.1f}h  |  WAVE {sim.wave:02d}  |  "
-            f"DR={dr_pct:.1f}%  |  OCC={occ_now:.0f}%  |  {forecast_str}  |  "
-            f"ACTIVE={len(active_pats)}")
+        # ── ACPL diagnostics ──────────────────────────────────────────────────
+        ad = sim.acpl.diagnostics()
+        fat_now = list(sim.fatigue_hist)[-1] if sim.fatigue_hist else 0.0
+        acpl_vals = [
+            str(ad["acpl_updates"]),
+            str(ad["acpl_buf_size"]),
+            f"{ad['acpl_p_loss']:.4f}",
+            f"{ad['acpl_mean_lam']:.3f}",
+            f"{ad['acpl_mean_C']:.3f}",
+            f"{fat_now:.1f}%",
+        ]
+        for vt, val in zip(_acpl_val_texts, acpl_vals):
+            vt.set_text(val)
 
-        return (_pat_scatter, _crit_scatter, _heatmap_img,
-                _occ_line, _dr_line, _pt_line, _sla_line)
+        # ── Header status line ────────────────────────────────────────────────
+        fcast = sim.forecaster.forecast_str()
+        _hdr_txt.set_text(
+            f"TICK {sim.step_n:5d}  T={sim.t:.0f}h  "
+            f"WAVE {sim.wave:02d}  "
+            f"DR={dr_pct:.1f}%  OCC={occ_now:.0f}%  "
+            f"ACTIVE={len(active_pats)}  |  {fcast}"
+        )
+
+        return (_pat_scatter, _crit_ring, _crit_star, _heatmap_mesh,
+                _occ_line, _occ_dot, _dr_line, _dr_dot,
+                _sla_line, _sla_dot, _pt_line,  _pt_dot)
 
     ani = animation.FuncAnimation(
         fig, _update, frames=cfg.max_frames,
-        interval=cfg.anim_interval, blit=False, repeat=False)
+        interval=cfg.anim_interval, blit=False, repeat=False,
+    )
 
     def on_close(event):
         sim.acpl.stop()
