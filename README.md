@@ -1,17 +1,17 @@
 # Hospital Resource Management System
-### Powered by ACPL v2 — an original algorithm by Shashank Dev
+### Powered by CCPL v2 — an original algorithm by Shashank Dev
 
-A real-time hospital simulation that uses a novel reinforcement learning algorithm — **ACPL (Adaptive Consequence-Penalised Learning)** — to dynamically allocate resources (beds, staff, equipment) across patients with evolving acuity.
+A real-time hospital simulation that uses a novel reinforcement learning algorithm — **CCPL (Causal Consequence-Penalized Learning)** — to dynamically allocate resources (beds, staff, equipment) across patients with evolving acuity.
 
 ---
 
-## What is ACPL?
+## What is CCPL?
 
-> **ACPL is an original algorithm developed by me.**
+> **CCPL is an original algorithm developed by me.**
 
-Most resource allocation systems treat all bad outcomes equally. ACPL doesn't — it distinguishes between *expected* bad outcomes and *consequence-amplified* ones (e.g. assigning a wrong resource type to a deteriorating patient). The core idea: penalise actions proportional to their downstream consequence, not just their immediate reward signal.
+Most resource allocation systems treat all bad outcomes equally. CCPL doesn't — it distinguishes between *expected* bad outcomes and *consequence-amplified* ones (e.g. assigning a wrong resource type to a deteriorating patient). The core idea: penalise actions proportional to their downstream consequence, not just their immediate reward signal.
 
-Key properties of ACPL v2:
+Key properties of CCPL v2:
 - Learns *online* during the simulation — no pre-training required
 - Uses a **dual-stream architecture** to separate state value from action advantage
 - Uses **n-step returns** to account for the delayed nature of clinical outcomes
@@ -30,13 +30,13 @@ The simulation models a live hospital with:
 |---|---|
 | **Patients** | 5 categories (Emergency, ICU, General, Surgical, Maternity), dynamic acuity, comorbidity risk, deterioration/improvement rates |
 | **Resources** | General beds, ICU beds, Emergency bays, Surgical suites, Staff teams |
-| **ACPL Advisor** | Online RL agent that penalises risky assignments before they happen |
+| **CCPL Advisor** | Online RL agent that penalises risky assignments before they happen |
 | **Demand Forecaster** | EMA-based wave size predictor; flags surges proactively |
 | **SLA Tracker** | NHS-style wait-time limits per category with breach logging |
 | **Readmission Queue** | 5% of discharged patients return with elevated acuity |
 | **Staff Fatigue Model** | Load-dependent burnout that reduces treatment effectiveness |
 | **Kalman Filter** | Per-patient acuity trend estimation for predictive assignment |
-| **Live Dashboard** | Matplotlib animation — ward map, KPIs, acuity histogram, ACPL diagnostics |
+| **Live Dashboard** | Matplotlib animation — ward map, KPIs, acuity histogram, CCPL diagnostics |
 
 ---
 
@@ -102,7 +102,7 @@ python hospital_rms_v2.py --theme light --width 30
 
 Each run produces (inside `hrms_runs/`):
 
-- `hrms_events_<id>.csv` — per-event log (discharge/mortality, acuity, wait time, ACPL penalty)
+- `hrms_events_<id>.csv` — per-event log (discharge/mortality, acuity, wait time, CCPL penalty)
 - `session_report_<id>.json` — summary with per-category stats and SLA breach rates
 - `batch_summary_<id>.csv` — (batch mode) per-seed metrics with 95% CI
 
@@ -118,7 +118,7 @@ The real-time dashboard shows:
 - **Active patient count**
 - **SLA breach rate %** — per-tick wait-time violations
 - **Resource utilisation + fatigue** — horizontal bars per resource
-- **ACPL v2 diagnostics** — live: update count, buffer size, policy loss, mean λ, mean consequence
+- **CCPL v2 diagnostics** — live: update count, buffer size, policy loss, mean λ, mean consequence
 - **Patient acuity distribution** — histogram across all active patients
 
 ---
@@ -131,11 +131,11 @@ Simulation.tick()
   ├── AcuityFilter.predict()  — Kalman filter per patient
   ├── Resource.step()         — fatigue update (STAFF_TEAM only)
   ├── ResourceAllocator.assign()
-  │     ├── build cost matrix (urgency + skill + wait + velocity + load + fatigue + ACPL penalty)
+  │     ├── build cost matrix (urgency + skill + wait + velocity + load + fatigue + CCPL penalty)
   │     └── scipy.linear_sum_assignment → optimal assignment
   ├── SLATracker.check()      — every 10 ticks
   ├── ReadmissionQueue.flush() — readmissions due this tick
-  └── outcome resolution (discharge / mortality → ACPL.feedback())
+  └── outcome resolution (discharge / mortality → CCPL.feedback())
 ```
 
 ---
@@ -144,6 +144,6 @@ Simulation.tick()
 
 Copyright © 2025 Shashank Dev. All rights reserved.
 
-The **ACPL algorithm** (including its consequence-penalised learning formulation, dual-stream architecture, and n-step consequence aggregation) is an original contribution by the author. Reproduction of the ACPL core for commercial or research purposes without explicit written permission is prohibited.
+The **CCPL algorithm** (including its consequence-penalised learning formulation, dual-stream architecture, and n-step consequence aggregation) is an original contribution by the author. Reproduction of the CCPL core for commercial or research purposes without explicit written permission is prohibited.
 
 The simulation framework (patient model, ward layout, visualisation) is open for educational use with attribution.
